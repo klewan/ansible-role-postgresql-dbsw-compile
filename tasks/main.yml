@@ -1,0 +1,125 @@
+---
+
+#
+# Check if DB software is already installed
+#
+
+- name: pre-check | check if DB software is already installed
+  stat:
+    path: '{{ postgresql_pghomes_directory }}/{{ postgresql_pghomes_binary_prefix }}postgresql-{{ item.version }}' 
+  with_items: "{{ postgresql_dbsw_compile_sw_source_db }}"
+  loop_control:
+    label: "[version: {{ item.version }}, directory: {{ postgresql_pghomes_directory }}/{{ postgresql_pghomes_binary_prefix }}postgresql-{{ item.version }}]"
+  register: postgresql_dbsw_compile_pghome_stat
+  tags:
+    - postgresql_dbsw_compile_pghome_stat
+
+#
+# Install required packages need
+#
+
+- name: install packages required for postgres software compilation
+  yum:
+    name: "{{ postgresql_dbsw_compile_required_packages }}"
+    state: present
+  become: yes
+  become_user: root
+  tags:
+    - postgresql_dbsw_compile_required_packages
+
+#
+# Pre-tasks
+#
+
+- name: create compile directory
+  file: dest={{ postgresql_dbsw_compile_compile_directory }} state=directory
+  tags:
+    - postgresql_dbsw_compile_compile_directory
+
+- name: extract source code archive to the compile directory
+  unarchive:
+    src: "{{ item.item.filename }}"
+    dest: "{{ postgresql_dbsw_compile_compile_directory }}"
+    remote_src: '{{ postgresql_dbsw_compile_sw_remote_src }}'
+  with_items: "{{ postgresql_dbsw_compile_pghome_stat.results }}"
+  loop_control:
+    label: "[version: {{ item.item.version }}, file: {{ item.item.filename }}]"
+  when: not item.stat.exists
+  tags:
+    - postgresql_dbsw_compile_copy_sourcecode_archive
+
+- name: create compile_from_source.sh script for each version
+  template: 
+    src: compile_from_source.sh.j2 
+    dest: "{{ postgresql_dbsw_compile_compile_directory }}/compile_from_source_{{ item.item.version }}.sh"
+    mode: 0755
+  with_items: "{{ postgresql_dbsw_compile_pghome_stat.results }}"
+  loop_control:
+    label: "[version: {{ item.item.version }}, file: {{ postgresql_dbsw_compile_compile_directory }}/compile_from_source_{{ item.item.version }}.sh]"
+  when: not item.stat.exists
+  tags:
+    - postgresql_dbsw_compile_create_compile_script
+
+#
+# Compile source code
+#
+
+- name: compile PostgreSQL source code
+  shell: |
+    cd {{ postgresql_dbsw_compile_compile_directory }}/postgresql-{{ item.item.version }}/
+    sh {{ postgresql_dbsw_compile_compile_directory }}/compile_from_source_{{ item.item.version }}.sh
+  with_items: "{{ postgresql_dbsw_compile_pghome_stat.results }}"
+  loop_control:
+    label: "[version: {{ item.item.version }}, file: {{ postgresql_dbsw_compile_compile_directory }}/compile_from_source_{{ item.item.version }}.sh]"
+  when: not item.stat.exists
+  tags:
+    - postgresql_dbsw_compile_source_code
+
+#
+# Post-tasks
+#
+
+- name: archive PostgreSQL binaries
+  archive:
+    path: "{{ postgresql_pghomes_directory }}/{{ postgresql_pghomes_binary_prefix }}postgresql-{{ item.item.version }}"
+    dest: "{{ postgresql_pghomes_directory }}/{{ postgresql_pghomes_binary_prefix }}postgresql-{{ item.item.version }}.tgz"
+  with_items: "{{ postgresql_dbsw_compile_pghome_stat.results }}"
+  loop_control:
+    label: "[version: {{ item.item.version }}, file: {{ postgresql_pghomes_directory }}/{{ postgresql_pghomes_binary_prefix }}postgresql-{{ item.item.version }}.tgz]"
+  when: not item.stat.exists
+  tags:
+    - postgresql_dbsw_compile_archive_binary
+
+- name: fetch compiled binaries back to Ansible control machine
+  fetch:
+    src: "{{ postgresql_pghomes_directory }}/{{ postgresql_pghomes_binary_prefix }}postgresql-{{ item.item.version }}.tgz"
+    dest: /tmp/
+    flat: yes
+  with_items: "{{ postgresql_dbsw_compile_pghome_stat.results }}"
+  loop_control:
+    label: "[version: {{ item.item.version }}, file: /tmp/{{ postgresql_pghomes_binary_prefix }}postgresql-{{ item.item.version }}.tgz]"
+  when: not item.stat.exists
+  tags:
+    - postgresql_dbsw_compile_fetch_compiled_binaries
+
+- name: store compiled binaries in a repository
+  local_action: shell cp /tmp/{{ postgresql_pghomes_binary_prefix }}postgresql-{{ item.item.version }}.tgz {{ postgresql_dbsw_compile_sw_binary_packages_directory }}/ 
+  become: true
+  become_user: "{{ postgresql_dbsw_compile_sw_binary_packages_directory_owner }}"
+  with_items: "{{ postgresql_dbsw_compile_pghome_stat.results }}"
+  loop_control:
+    label: "[version: {{ item.item.version }}, file: {{ postgresql_dbsw_compile_sw_binary_packages_directory }}/{{ postgresql_pghomes_binary_prefix }}postgresql-{{ item.item.version }}.tgz]"
+  when: not item.stat.exists
+  tags:
+    - postgresql_dbsw_compile_store_binaries_in_repo
+
+- name: cleanup
+  local_action: file path=/tmp/{{ postgresql_pghomes_binary_prefix }}postgresql-{{ item.item.version }}.tgz state=absent
+  become: false
+  with_items: "{{ postgresql_dbsw_compile_pghome_stat.results }}"
+  loop_control:
+    label: "[version: {{ item.item.version }}, file: /tmp/{{ postgresql_pghomes_binary_prefix }}postgresql-{{ item.item.version }}.tgz]"
+  when: not item.stat.exists
+  tags:
+    - postgresql_dbsw_compile_cleanup
+

@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# The following packages are required for PostgreSQL compilation:
+#
+# yum install -y gcc openldap-devel python-devel readline-devel redhat-lsb bison flex perl-ExtUtils-Embed zlib-devel crypto-utils openssl-devel pam-devel libxml2-devel libxslt-devel tcl tcl-devel openssh-clients bzip2 net-tools wget screen unzip sysstat xorg-x11-xauth
+#
+
+PGHOME={{ postgresql_pghomes_directory }}/{{ postgresql_pghomes_binary_prefix }}postgresql-{{ item.item.version }}
+
+./configure --prefix=${PGHOME} \
+            --exec-prefix=${PGHOME} \
+            --bindir=${PGHOME}/bin \
+            --libdir=${PGHOME}/lib \
+            --sysconfdir=${PGHOME}/etc \
+            --includedir=${PGHOME}/include \
+            --datarootdir=${PGHOME}/share \
+            --datadir=${PGHOME}/share 
+{%- for flag, flag_value in postgresql_dbsw_compile_flags_extra.items() %} \
+            --{{ flag }}{% if flag_value %}={{ flag_value }}{% endif %} 
+{%- endfor %}
+
+
+make all
+make install
+cd contrib
+make install
+
+
